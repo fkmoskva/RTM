@@ -1,1 +1,1 @@
-# RTM
+Acoustic wave solutions

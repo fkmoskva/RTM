@@ -2,22 +2,32 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-#параметры
-length = 1000
-nu = 50          
-amplituda = 1
-ro = int(input("RHO is "))
-speed = 1000
-timing = 1
-n = 128        
-n_t = 500     
+# ------------------------
+# ФИЗИЧЕСКИЕ ПАРАМЕТРЫ
+# ------------------------
 
-t_0 = 1.2/nu
-k_tight = ro * speed**2
-dx = length/n
-dt = timing/n_t
+length = 200          # размер области (м)
+c = 340               # скорость звука (м/с)
+rho = 1.2             # плотность воздуха (кг/м^3)
+nu = 25               # частота источника (Гц)
+amplitude = 1
 
-#давление
+n = 200               # узлы по пространству
+n_t = 800             # шаги по времени
+
+dx = length / n
+
+# CFL условие
+dt = dx / (c * np.sqrt(2)) * 0.9
+
+print(f"CFL число = {c * dt / dx:.3f}")
+
+t0 = 1.2 / nu
+
+# ------------------------
+# МАССИВЫ
+# ------------------------
+
 p_prev = np.zeros((n, n))
 p = np.zeros((n, n))
 p_next = np.zeros((n, n))
@@ -25,60 +35,93 @@ p_next = np.zeros((n, n))
 i_src = n // 2
 j_src = n // 2
 
-def riker(t):
-    arg = (np.pi * nu * (t - t_0))**2
-    return amplituda * (1 - 2*arg) * np.exp(-arg)
+# ------------------------
+# Ricker wavelet
+# ------------------------
 
-#сетка
+def ricker(t):
+    arg = (np.pi * nu * (t - t0))**2
+    return amplitude * (1 - 2*arg) * np.exp(-arg)
+
+# ------------------------
+# СЕТКА
+# ------------------------
+
 x = np.linspace(0, length, n)
 y = np.linspace(0, length, n)
-X, Y = np.meshgrid(x, y)
+
 p_frames = []
 
 print("Симуляция запущена...")
 
-for it in range(1, n_t+1):
-    t = it * dt
-    
-    func = np.zeros((n, n))
-    func[i_src, j_src] = riker(t) / (dx * dx)
-    
-    for i in range(1, n-1):
-        for j in range(1, n-1):
-            d2p_dx2 = (p[i+1,j] - 2*p[i,j] + p[i-1,j]) / (dx**2)
-            d2p_dy2 = (p[i,j+1] - 2*p[i,j] + p[i,j-1]) / (dx**2)
-            
-            p_next[i,j] = (2*p[i,j] - p_prev[i,j] + 
-                          (nu**2 * dt**2) * (d2p_dx2 + d2p_dy2) + 
-                          dt**2 * func[i,j] / ro)
+# ------------------------
+# ОСНОВНОЙ ЦИКЛ
+# ------------------------
 
+for it in range(1, n_t):
+
+    t = it * dt
+
+    source = np.zeros((n, n))
+    source[i_src, j_src] = ricker(t) / (dx * dx)
+
+    # ------------------------
+    # ЛАПЛАСИАН через np.diff
+    # ------------------------
+
+    d2x = np.diff(p, n=2, axis=0) / dx**2
+    d2y = np.diff(p, n=2, axis=1) / dx**2
+
+    laplacian = np.zeros_like(p)
+    laplacian[1:-1, 1:-1] = d2x[:,1:-1] + d2y[1:-1,:]
+
+    # ------------------------
+    # Обновление
+    # ------------------------
+
+    p_next = (2*p - p_prev +
+              (c**2 * dt**2) * laplacian +
+              dt**2 * source / rho)
+
+    # Граничные условия (жёсткие стенки)
     p_next[0, :] = 0
     p_next[-1, :] = 0
     p_next[:, 0] = 0
     p_next[:, -1] = 0
 
-    p_prev, p, p_next = p.copy(), p_next.copy(), p_prev.copy()
-    
+    p_prev, p = p, p_next
+
     if it % 5 == 0:
         p_frames.append(p.copy())
 
 print(f"Сохранено кадров: {len(p_frames)}")
 
-fig, ax = plt.subplots(figsize=(10, 8))
-im = ax.imshow(p_frames[0], extent=[0, length, 0, length], 
-               origin='lower', cmap='viridis', animated=True)
-ax.set_xlabel("X")
-ax.set_ylabel("Y")
-ax.set_title("2D Волновое уравнение (Ricker source)")
-plt.colorbar(im, ax=ax, label='Давление P')
+# ------------------------
+# ВИЗУАЛИЗАЦИЯ
+# ------------------------
 
-def update(frame_idx):
-    im.set_array(p_frames[frame_idx])
-    t_current = frame_idx * 5 * dt
-    ax.set_title(f"2D Волна t = {t_current:.3f} с")
+fig, ax = plt.subplots(figsize=(8, 6))
+
+im = ax.imshow(p_frames[0],
+               extent=[0, length, 0, length],
+               origin='lower',
+               cmap='viridis',
+               animated=True)
+
+plt.colorbar(im, ax=ax, label="Давление")
+ax.set_xlabel("X (м)")
+ax.set_ylabel("Y (м)")
+
+def update(frame):
+    im.set_array(p_frames[frame])
+    ax.set_title(f"2D Волна, t = {frame*5*dt:.3f} c")
     return [im]
 
-anim = FuncAnimation(fig, update, frames=len(p_frames), interval=25, blit=True, repeat=True)
+anim = FuncAnimation(fig,
+                     update,
+                     frames=len(p_frames),
+                     interval=30,
+                     blit=True)
+
 plt.tight_layout()
 plt.show()
-

@@ -58,7 +58,7 @@ for it in range(1, n_t+1):
     for i in range(1, n-1):
         for j in range(1, n-1):
             p_next[i,j] = (2*p[i,j] - p_prev[i,j] + 
-                          (nu**2 * dt**2) * (d2p_dx2[i-1, j] + d2p_dy2[i, j-1]) + 
+                          (speed**2 * dt**2) * (d2p_dx2[i-1, j] + d2p_dy2[i, j-1]) + 
                           dt**2 * func[i,j] / ro)
 
     p_next[0, :] = 0

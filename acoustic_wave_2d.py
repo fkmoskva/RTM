@@ -3,14 +3,14 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 #параметры
-length = 1000
-nu = 50          
-amplituda = 1
-ro = int(input("RHO is "))
-speed = 1000
-timing = 1
-n = 128        
-n_t = 500     
+length = 1000  # м - размер области
+nu = 50  # Гц - частота источника
+amplituda = 1  # Па - амплитуда давления
+ro = 1000  # кг/м³ - плотность воды
+speed = 1500  # м/с - скорость звука в воде
+timing = 1  # с - время симуляции
+n = 128  # количество точек по каждой оси
+n_t = 500  # количество временных шагов     
 
 t_0 = 1.2/nu
 k_tight = ro * speed**2
@@ -43,13 +43,22 @@ for it in range(1, n_t+1):
     func = np.zeros((n, n))
     func[i_src, j_src] = riker(t) / (dx * dx)
     
+    # Вычисление второй производной через np.diff
+    # Первая производная по x
+    dp_dx = np.diff(p, axis=0) / dx
+    # Вторая производная по x (размер: n-2 x n)
+    d2p_dx2 = np.diff(dp_dx, axis=0) / dx
+    
+    # Первая производная по y
+    dp_dy = np.diff(p, axis=1) / dx
+    # Вторая производная по y (размер: n x n-2)
+    d2p_dy2 = np.diff(dp_dy, axis=1) / dx
+    
+    # Применяем уравнение волны к внутренним точкам
     for i in range(1, n-1):
         for j in range(1, n-1):
-            d2p_dx2 = (p[i+1,j] - 2*p[i,j] + p[i-1,j]) / (dx**2)
-            d2p_dy2 = (p[i,j+1] - 2*p[i,j] + p[i,j-1]) / (dx**2)
-            
             p_next[i,j] = (2*p[i,j] - p_prev[i,j] + 
-                          (nu**2 * dt**2) * (d2p_dx2 + d2p_dy2) + 
+                          (nu**2 * dt**2) * (d2p_dx2[i-1, j] + d2p_dy2[i, j-1]) + 
                           dt**2 * func[i,j] / ro)
 
     p_next[0, :] = 0

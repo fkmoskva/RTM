@@ -11,7 +11,6 @@ c = 340               # скорость звука (м/с)
 rho = 1.2             # плотность воздуха (кг/м^3)
 nu = 25               # частота источника (Гц)
 amplitude = 1
-
 n = 200               # узлы по пространству
 n_t = 800             # шаги по времени
 
@@ -23,6 +22,32 @@ dt = dx / (c * np.sqrt(2)) * 0.9
 print(f"CFL число = {c * dt / dx:.3f}")
 
 t0 = 1.2 / nu
+# ---- Поглощающий слой 2λ ----
+lambda_wave = c / nu
+L_abs = 6.25 * lambda_wave
+n_abs = int(L_abs / dx)
+
+print("Толщина слоя (узлы):", n_abs)
+
+beta = np.zeros((n, n))
+
+x = np.arange(n)
+y = np.arange(n)
+X, Y = np.meshgrid(x, y, indexing='ij')
+
+dist_left   = X
+dist_right  = n - 1 - X
+dist_bottom = Y
+dist_top    = n - 1 - Y
+
+dist = np.minimum.reduce([dist_left, dist_right, dist_bottom, dist_top])
+
+mask = dist < n_abs
+
+beta_max = 4.25 * c / L_abs
+
+beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**1
+#----------------------------------
 
 # ------------------------
 # МАССИВЫ
@@ -79,15 +104,16 @@ for it in range(1, n_t):
     # Обновление
     # ------------------------
 
-    p_next = (2*p - p_prev +
-              (c**2 * dt**2) * laplacian +
-              dt**2 * source / rho)
+    p_next = (2*p - (1 - beta*dt) * p_prev 
+    + c**2 * dt**2 * laplacian
+    + dt**2 * source / rho) / (1 + beta*dt)
+
 
     # Граничные условия (жёсткие стенки)
-    p_next[0, :] = 0
-    p_next[-1, :] = 0
-    p_next[:, 0] = 0
-    p_next[:, -1] = 0
+    # p_next[0, :] = 0
+    # p_next[-1, :] = 0
+    # p_next[:, 0] = 0
+    # p_next[:, -1] = 0
 
     p_prev, p = p, p_next
 

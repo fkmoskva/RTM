@@ -44,9 +44,9 @@ dist = np.minimum.reduce([dist_left, dist_right, dist_bottom, dist_top])
 
 mask = dist < n_abs
 
-beta_max = 4.25 * c / L_abs
+beta_max = 42.5 * c / L_abs
 
-beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**1
+beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**2
 #----------------------------------
 
 # ------------------------

@@ -13,6 +13,7 @@ A corrected implementation of 2D acoustic wave propagation with spatially-varyin
 - ✅ Correct implementation of ∇·(K∇p) operator
 - ✅ **Strong absorbing boundary layers - NO reflections**
 - ✅ **Fixed visualization limits (vmin=-1e-7, vmax=1e-7)**
+- ✅ **Vertical material interface in inner region**
 - ✅ Real-time animation with symmetric colormap (RdBu_r)
 - ✅ Educational examples and documentation
 
@@ -26,11 +27,17 @@ pip install -r requirements.txt
 python wave_simulation_2d.py
 ```
 
-### Key Improvements
+### Key Features
 
-**No Reflections**: The absorbing boundary layer coefficient has been optimized (beta_max = 150) to completely eliminate reflections from boundaries. Boundary pressure is ~1e-14, which is 6 orders of magnitude below the wave amplitude.
+**No Reflections from Boundaries**: The absorbing boundary layer coefficient has been optimized (beta_max = 150) to completely eliminate reflections from domain edges. Boundary pressure is ~1e-14, which is 6 orders of magnitude below the wave amplitude.
 
-**Better Visualization**: Fixed color scale (±1e-7) with red-blue diverging colormap clearly shows wave compression (red) and rarefaction (blue).
+**Vertical Material Interface**: A vertical interface divides the inner region (where beta=0) into two media with different properties:
+- **Left**: c=340 m/s, ρ=1200 kg/m³
+- **Right**: c=442 m/s, ρ=1000 kg/m³
+
+This allows studying wave reflection and transmission at material boundaries.
+
+**Better Visualization**: Fixed color scale (±1e-7) with red-blue diverging colormap clearly shows wave compression (red) and rarefaction (blue). The right panel displays the material structure with annotations.
 
 ### Files
 
@@ -39,6 +46,7 @@ python wave_simulation_2d.py
 - `README_wave_simulation.md` - Detailed documentation
 - `COMPARISON.md` - Wrong vs correct implementation comparison
 - `REFLECTION_FIX.md` - **How reflections were eliminated**
+- `VERTICAL_INTERFACE.md` - **Vertical material interface implementation**
 
 ### Documentation
 
@@ -47,3 +55,5 @@ See [README_wave_simulation.md](README_wave_simulation.md) for detailed physics 
 See [COMPARISON.md](COMPARISON.md) for a comparison of incorrect vs correct approaches.
 
 See [REFLECTION_FIX.md](REFLECTION_FIX.md) for details on eliminating boundary reflections.
+
+See [VERTICAL_INTERFACE.md](VERTICAL_INTERFACE.md) for the vertical interface implementation.

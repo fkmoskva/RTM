@@ -188,6 +188,8 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
 # Левый график - волновое поле
 # Фиксированные пределы для лучшей визуализации волн
+# Примечание: При amplitude=10, максимальное давление ~1e-7
+# Если изменяете amplitude, измените vmin/vmax пропорционально
 im = ax1.imshow(p_frames[0],
                extent=[0, length, 0, length],
                origin='lower',

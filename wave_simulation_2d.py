@@ -9,7 +9,7 @@ from matplotlib.animation import FuncAnimation
 length = 200          # размер области (м)
 c = 340               # скорость звука (м/с)
 nu = 25               # частота источника (Гц)
-amplitude = 1
+amplitude = 10        # амплитуда источника (увеличена для лучшей визуализации)
 n = 200               # узлы по пространству
 n_t = 800             # шаги по времени
 
@@ -67,14 +67,17 @@ print(f"Плотность: мин={rho.min()}, макс={rho.max()}")
 
 K = np.ones((n, n)) * (c**2 * 1200)  # По умолчанию K = c² * ρ₀
 
-# Создадим неоднородность в центре области (например, область с другими свойствами)
-# Круглая область с другим bulk modulus
-center_x, center_y = n // 2, n // 2
-radius = n // 8
-
-dist_from_center = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
-mask_inhomo = dist_from_center < radius
-K[mask_inhomo] = (c * 1.2)**2 * 1000  # Область с увеличенной скоростью
+# ВНИМАНИЕ: Неоднородность создаёт отражения!
+# Закомментируйте следующий блок для устранения отражений от неоднородности
+# 
+# # Создадим неоднородность в центре области (например, область с другими свойствами)
+# # Круглая область с другим bulk modulus
+# center_x, center_y = n // 2, n // 2
+# radius = n // 8
+# 
+# dist_from_center = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
+# mask_inhomo = dist_from_center < radius
+# K[mask_inhomo] = (c * 1.2)**2 * 1000  # Область с увеличенной скоростью
 
 print(f"Bulk modulus: мин={K.min():.2e}, макс={K.max():.2e}")
 
@@ -84,7 +87,8 @@ print(f"Bulk modulus: мин={K.min():.2e}, макс={K.max():.2e}")
 
 beta = np.zeros((n, n))
 mask = dist < n_abs
-beta_max = 42.5 * c / L_abs
+# Увеличиваем коэффициент поглощения для устранения отражений от границ
+beta_max = 150 * c / L_abs  # Увеличено с 42.5 до 150
 beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**2
 
 # ------------------------
@@ -183,13 +187,16 @@ print(f"Сохранено кадров: {len(p_frames)}")
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
 # Левый график - волновое поле
+# Фиксированные пределы для лучшей визуализации волн
 im = ax1.imshow(p_frames[0],
                extent=[0, length, 0, length],
                origin='lower',
-               cmap='viridis',
+               cmap='RdBu_r',  # Красно-сине-белая палитра для волн
+               vmin=-1e-7,     # Минимальное значение
+               vmax=1e-7,      # Максимальное значение
                animated=True)
 
-plt.colorbar(im, ax=ax1, label="Давление")
+plt.colorbar(im, ax=ax1, label="Давление (Па)")
 ax1.set_xlabel("X (м)")
 ax1.set_ylabel("Y (м)")
 

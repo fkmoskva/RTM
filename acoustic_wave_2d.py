@@ -17,7 +17,7 @@ n_t = 800             # шаги по времени
 dx = length / n
 
 # CFL условие
-dt = dx / (c * np.sqrt(2)) * 0.9
+dt = dx / (c * np.sqrt(2)) * 0.2
 
 print(f"CFL число = {c * dt / dx:.3f}")
 
@@ -49,9 +49,35 @@ beta_max = 42.5 * c / L_abs
 beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**2
 #----------------------------------
 
+
+# ------------------------
+# СРЕДА: rho(x,y), K(x,y)
+# ------------------------
+rho = np.ones((n, n))
+
+# внутренняя область
+inner_mask = (beta == 0)
+
+# вертикальное разделение по X (как у вас)
+rho[inner_mask & (X <= 100)] = 1200
+rho[inner_mask & (X >  100)] = 800
+
+# задаём K(x,y), например так, чтобы слева и справа скорость отличалась
+# v^2 = K/rho. Пусть v слева 300, справа 380 м/с:
+K = np.ones((n, n)) * (340**2 * 1.2)   # фон
+K[inner_mask & (X <= 100)] = 300**2 * 1200
+K[inner_mask & (X >  100)] = 380**2 * 800
+
+# ОГРАНИЧЕНИЕ амплитуд для стабильности
+rho = np.clip(rho, 100, 2000)      # ρ между 100-2000 кг/м³
+K   = np.clip(K, 1e5, 2e8)         # K в разумных пределах
+
+
+
 # ------------------------
 # МАССИВЫ
 # ------------------------
+
 
 p_prev = np.zeros((n, n))
 p = np.zeros((n, n))
@@ -88,25 +114,51 @@ for it in range(1, n_t):
     t = it * dt
 
     source = np.zeros((n, n))
-    source[i_src, j_src] = ricker(t) / (dx * dx)
+    source[i_src, j_src] = ricker(t) / (dx * dx) * 0.1
 
     # ------------------------
     # ЛАПЛАСИАН через np.diff
     # ------------------------
 
-    d2x = np.diff(p, n=2, axis=0) / dx**2
-    d2y = np.diff(p, n=2, axis=1) / dx**2
-
-    laplacian = np.zeros_like(p)
-    laplacian[1:-1, 1:-1] = d2x[:,1:-1] + d2y[1:-1,:]
-
-    # ------------------------
-    # Обновление
+        # ------------------------
+    # ОПЕРАТОР ∇·(1/ρ ∇p)
     # ------------------------
 
-    p_next = (2*p - (1 - beta*dt) * p_prev 
-    + c**2 * dt**2 * laplacian
-    + dt**2 * source / rho) / (1 + beta*dt)
+    inv_rho = 1.0 / rho
+
+    # --- по x ---
+    dpdx_plus = p[1:, :] - p[:-1, :]                       # градиент на полуцелых
+    inv_rho_x = 0.5 * (inv_rho[1:, :] + inv_rho[:-1, :])   # 1/rho на полуцелых
+    flux_x = inv_rho_x * dpdx_plus / dx                    # поток (1/rho * dp/dx)
+
+    div_x = np.zeros_like(p)
+    div_x[1:-1, :] = (flux_x[1:, :] - flux_x[:-1, :]) / dx
+
+    # --- по y ---
+    dpdy_plus = p[:, 1:] - p[:, :-1]
+    inv_rho_y = 0.5 * (inv_rho[:, 1:] + inv_rho[:, :-1])
+    flux_y = inv_rho_y * dpdy_plus / dx
+
+    div_y = np.zeros_like(p)
+    div_y[:, 1:-1] = (flux_y[:, 1:] - flux_y[:, :-1]) / dx
+
+    # итоговый оператор
+    div_term = div_x + div_y
+
+
+    # ------------------------
+    # Обновление (неоднородная среда)
+    # ------------------------
+
+    p_next = (2*p - (1 - beta*dt) * p_prev
+              + K * dt**2 * div_term        # K(x,y) * ∇·(1/ρ ∇p)
+              + dt**2 * source) / (1 + beta*dt)
+
+    if np.any(np.isnan(p_next)) or np.any(np.isinf(p_next)):
+        print(f"NaN/Inf на шаге {it}")
+        break
+
+
 
 
     # Граничные условия (жёсткие стенки)
@@ -121,6 +173,8 @@ for it in range(1, n_t):
         p_frames.append(p.copy())
 
 print(f"Сохранено кадров: {len(p_frames)}")
+
+
 
 # ------------------------
 # ВИЗУАЛИЗАЦИЯ

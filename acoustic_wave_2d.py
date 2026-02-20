@@ -6,45 +6,41 @@ from matplotlib.animation import FuncAnimation
 # ФИЗИЧЕСКИЕ ПАРАМЕТРЫ
 # ------------------------
 
-length = 200          # размер области (м)
-c = 340               # скорость звука (м/с)
-rho = 1.2             # плотность воздуха (кг/м^3)
-nu = 25               # частота источника (Гц)
+length = 200              # размер области (м)
+speed = 340               # скорость звука (м/с)
+rho = 1.2                 # плотность воздуха (кг/м^3)
+freq = 25                 # частота источника (Гц)
 amplitude = 1
-n = 200               # узлы по пространству
-n_t = 800             # шаги по времени
-
-dx = length / n
+nodes_space = 200         # узлы по пространству
+nodes_time = 800          # шаги по времени
+t0 = 1.2 / freq
+dx = length / nodes_space
 
 # CFL условие
-dt = dx / (c * np.sqrt(2)) * 0.2
+dt = dx / (speed * np.sqrt(2)) * 0.33
+print(f"CFL  = {speed * dt / dx:.3f}")
 
-print(f"CFL число = {c * dt / dx:.3f}")
-
-t0 = 1.2 / nu
-# ---- Поглощающий слой 2λ ----
-lambda_wave = c / nu
+# ---- Поглощающий слой 6.25λ ----
+lambda_wave = speed / freq
 L_abs = 6.25 * lambda_wave
 n_abs = int(L_abs / dx)
 
-print("Толщина слоя (узлы):", n_abs)
 
-beta = np.zeros((n, n))
-
-x = np.arange(n)
-y = np.arange(n)
+beta = np.zeros((nodes_space, nodes_space))
+x = np.arange(nodes_space)
+y = np.arange(nodes_space)
 X, Y = np.meshgrid(x, y, indexing='ij')
 
 dist_left   = X
-dist_right  = n - 1 - X
+dist_right  = nodes_space - 1 - X
 dist_bottom = Y
-dist_top    = n - 1 - Y
+dist_top    = nodes_space - 1 - Y
 
 dist = np.minimum.reduce([dist_left, dist_right, dist_bottom, dist_top])
 
 mask = dist < n_abs
 
-beta_max = 42.5 * c / L_abs
+beta_max = 42.5 * speed / L_abs
 
 beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**2
 #----------------------------------
@@ -53,74 +49,64 @@ beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**2
 # ------------------------
 # СРЕДА: rho(x,y), K(x,y)
 # ------------------------
-rho = np.ones((n, n))
 
-# внутренняя область
-inner_mask = (beta == 0)
+rho = np.ones((nodes_space, nodes_space))
+rho[(Y <= 100)] = 1200
+rho[(Y > 100)] = 800
 
-# вертикальное разделение по X (как у вас)
-rho[inner_mask & (X <= 100)] = 1200
-rho[inner_mask & (X >  100)] = 800
 
-# задаём K(x,y), например так, чтобы слева и справа скорость отличалась
-# v^2 = K/rho. Пусть v слева 300, справа 380 м/с:
-K = np.ones((n, n)) * (340**2 * 1.2)   # фон
-K[inner_mask & (X <= 100)] = 300**2 * 1200
-K[inner_mask & (X >  100)] = 380**2 * 800
-
-# ОГРАНИЧЕНИЕ амплитуд для стабильности
-rho = np.clip(rho, 100, 2000)      # ρ между 100-2000 кг/м³
-K   = np.clip(K, 1e5, 2e8)         # K в разумных пределах
-
+K = np.ones((nodes_space, nodes_space)) * (340**2 * 1.2)
+K[(X <= 100)] = 300**2 * 1200
+K[(X >  100)] = 380**2 * 800
 
 
 # ------------------------
 # МАССИВЫ
 # ------------------------
 
+p_prev = np.zeros((nodes_space, nodes_space))
+p = np.zeros((nodes_space, nodes_space))
+p_next = np.zeros((nodes_space, nodes_space))
+i_src = nodes_space // 2
+j_src = nodes_space // 2
 
-p_prev = np.zeros((n, n))
-p = np.zeros((n, n))
-p_next = np.zeros((n, n))
-
-i_src = n // 2
-j_src = n // 2
 
 # ------------------------
 # Ricker wavelet
 # ------------------------
 
 def ricker(t):
-    arg = (np.pi * nu * (t - t0))**2
+    arg = (np.pi * freq * (t - t0))**2
     return amplitude * (1 - 2*arg) * np.exp(-arg)
+
 
 # ------------------------
 # СЕТКА
 # ------------------------
 
-x = np.linspace(0, length, n)
-y = np.linspace(0, length, n)
+x = np.linspace(0, length, nodes_space)
+y = np.linspace(0, length, nodes_space)
 
 p_frames = []
+print("Starting simulation...")
 
-print("Симуляция запущена...")
 
 # ------------------------
 # ОСНОВНОЙ ЦИКЛ
 # ------------------------
 
-for it in range(1, n_t):
+for it in range(1, nodes_time):
 
     t = it * dt
-
-    source = np.zeros((n, n))
+    source = np.zeros((nodes_space, nodes_space))
     source[i_src, j_src] = ricker(t) / (dx * dx) * 0.1
+
 
     # ------------------------
     # ЛАПЛАСИАН через np.diff
     # ------------------------
-
-        # ------------------------
+    #
+    # ------------------------
     # ОПЕРАТОР ∇·(1/ρ ∇p)
     # ------------------------
 
@@ -161,19 +147,12 @@ for it in range(1, n_t):
 
 
 
-    # Граничные условия (жёсткие стенки)
-    # p_next[0, :] = 0
-    # p_next[-1, :] = 0
-    # p_next[:, 0] = 0
-    # p_next[:, -1] = 0
 
     p_prev, p = p, p_next
-
     if it % 5 == 0:
         p_frames.append(p.copy())
 
-print(f"Сохранено кадров: {len(p_frames)}")
-
+print(f"Saving frames: {len(p_frames)}")
 
 
 # ------------------------
@@ -181,7 +160,6 @@ print(f"Сохранено кадров: {len(p_frames)}")
 # ------------------------
 
 fig, ax = plt.subplots(figsize=(8, 6))
-
 im = ax.imshow(p_frames[0],
                extent=[0, length, 0, length],
                origin='lower',

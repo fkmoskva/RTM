@@ -1,4 +1,4 @@
-import numpy as np
+import numpy as np 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
@@ -6,23 +6,19 @@ from matplotlib.animation import FuncAnimation
 # ФИЗИЧЕСКИЕ ПАРАМЕТРЫ
 # ------------------------
 
-length = 200              # размер области (м)
-speed = 340               # скорость звука (м/с)
-rho = 1.2                 # плотность воздуха (кг/м^3)
-freq = 25                 # частота источника (Гц)
+length = 800              # размер области (м)
+velocity = 340               # скорость звука (м/с)
+rho = 1200              # плотность воздуха (кг/м^3)
+freq = 25               # частота источника (Гц)
 amplitude = 1
-nodes_space = 200         # узлы по пространству
+nodes_space = 600         # узлы по пространству
 nodes_time = 800          # шаги по времени
 t0 = 1.2 / freq
 dx = length / nodes_space
 
-# CFL условие
-dt = dx / (speed * np.sqrt(2)) * 0.33
-print(f"CFL  = {speed * dt / dx:.3f}")
-
 # ---- Поглощающий слой 6.25λ ----
-lambda_wave = speed / freq
-L_abs = 6.25 * lambda_wave
+lambda_wave = velocity / freq
+L_abs = 6.5 * lambda_wave
 n_abs = int(L_abs / dx)
 
 
@@ -40,7 +36,7 @@ dist = np.minimum.reduce([dist_left, dist_right, dist_bottom, dist_top])
 
 mask = dist < n_abs
 
-beta_max = 42.5 * speed / L_abs
+beta_max = 42.5 * velocity / L_abs
 
 beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**2
 #----------------------------------
@@ -50,15 +46,32 @@ beta[mask] = beta_max * ((n_abs - dist[mask]) / n_abs)**2
 # СРЕДА: rho(x,y), K(x,y)
 # ------------------------
 
+mask_lower = X <= (nodes_space // 2)
+mask_upper = X > (nodes_space // 2)
+
 rho = np.ones((nodes_space, nodes_space))
-rho[(Y <= 100)] = 1200
-rho[(Y > 100)] = 800
+rho[mask_lower] = 1200
+rho[mask_upper] = 800
 
 
-K = np.ones((nodes_space, nodes_space)) * (340**2 * 1.2)
-K[(X <= 100)] = 300**2 * 1200
-K[(X >  100)] = 380**2 * 800
+Vp = np.ones((nodes_space,nodes_space))
+Vp[mask_lower] = 300
+Vp[mask_upper] = 340
+Vp_max = Vp.max()
 
+K = np.ones((nodes_space, nodes_space))
+K[mask_lower] = Vp[mask_lower]**2 * rho[mask_lower]
+K[mask_upper] = Vp[mask_upper]**2 * rho[mask_upper]
+
+
+
+
+Vp_max = Vp.max()
+
+
+# CFL условие
+dt = dx / (Vp_max * np.sqrt(2)) * 0.6
+print(f"CFL  = {Vp_max * dt / dx:.3f}")
 
 # ------------------------
 # МАССИВЫ
@@ -69,6 +82,22 @@ p = np.zeros((nodes_space, nodes_space))
 p_next = np.zeros((nodes_space, nodes_space))
 i_src = nodes_space // 2
 j_src = nodes_space // 2
+
+# ------------------------
+# ПРИЁМНИКИ
+# ------------------------
+
+nrec = 100
+
+# линия приёмников чуть выше источника по y (вдоль x)
+j_rec = j_src - 10                  # на 10 узлов выше источника, подбери под свою задачу
+
+# x-координаты приёмников равномерно по модели
+ix_rec = np.linspace(10, nodes_space - 11, nrec).astype(int)
+
+# массив сейсмограмм: (nrec, nodes_time)
+seis = np.zeros((nrec, nodes_time))
+
 
 
 # ------------------------
@@ -99,7 +128,7 @@ for it in range(1, nodes_time):
 
     t = it * dt
     source = np.zeros((nodes_space, nodes_space))
-    source[i_src, j_src] = ricker(t) / (dx * dx) * 0.1
+    source[i_src, j_src] += ricker(t) / ((dx * dx) * 0.01)
 
 
     # ------------------------
@@ -144,6 +173,12 @@ for it in range(1, nodes_time):
         print(f"NaN/Inf на шаге {it}")
         break
 
+    # ------------------------
+    # ЗАПИСЬ В ПРИЁМНИКИ
+    # ------------------------
+    for irec in range(nrec):
+        ix = ix_rec[irec]
+        seis[irec, it] = p_next[ix, j_rec]
 
 
 
@@ -159,12 +194,18 @@ print(f"Saving frames: {len(p_frames)}")
 # ВИЗУАЛИЗАЦИЯ
 # ------------------------
 
-fig, ax = plt.subplots(figsize=(8, 6))
+# Вычисляем симметричный предел по всем кадрам
+global_max = max(np.abs(frame).max() for frame in p_frames)
+
+fig, ax = plt.subplots(figsize=(16, 12))
 im = ax.imshow(p_frames[0],
                extent=[0, length, 0, length],
                origin='lower',
                cmap='viridis',
+               vmin=-global_max/10,      # <-- добавить
+               vmax= global_max/10,      # <-- добавить
                animated=True)
+
 
 plt.colorbar(im, ax=ax, label="Давление")
 ax.set_xlabel("X (м)")
@@ -182,4 +223,14 @@ anim = FuncAnimation(fig,
                      blit=True)
 
 plt.tight_layout()
+plt.show()
+
+fig2, ax2 = plt.subplots(figsize=(8, 6))
+im2 = ax2.imshow(seis,
+                 aspect='auto',
+                 cmap='gray',
+                 origin='upper')
+ax2.set_xlabel("Time step")
+ax2.set_ylabel("Receiver index")
+plt.colorbar(im2, ax=ax2, label="Pressure")
 plt.show()

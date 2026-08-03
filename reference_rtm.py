@@ -18,7 +18,7 @@ import os
 import time
 import numpy as np
 
-from src.models import setup_twolayer, setup_marmousi
+from src.models import setup_twolayer, setup_marmousi, setup_from_segy
 from src.solver import run_forward, run_adjoint_imaging
 from src.plotting import plot_seismogram
 
@@ -164,7 +164,7 @@ def run_reference(cfg, save_every, out, n_shots=5, clip_val=None, illum_comp=Fal
 '''Точка входа: разбор аргументов и запуск.'''
 def main():
     ap = argparse.ArgumentParser(description='Multi-shot эталонный RTM')
-    ap.add_argument('--model',          choices=['twolayer', 'marmousi'], default='twolayer')
+    ap.add_argument('--model',          choices=['twolayer', 'marmousi', 'segy'], default='twolayer')
     ap.add_argument('--nx',             type=int,   default=500)
     ap.add_argument('--ny',             type=int,   default=500)
     ap.add_argument('--dx',             type=float, default=None,
@@ -177,7 +177,11 @@ def main():
     ap.add_argument('--src-z',          type=int,   default=None,
                     help='Глубина источника в ячейках (только twolayer)')
     ap.add_argument('--factor',         type=int,   default=1,
-                    help='Прореживание Marmousi: 2=dx8м (~8x быстрее), 3=dx12м (~27x быстрее)')
+                    help='Прореживание Marmousi/SEG-Y: 2=dx8м (~8x быстрее), 3=dx12м (~27x быстрее)')
+    ap.add_argument('--vp-file',        default=None,
+                    help='Путь к SEG-Y файлу с моделью Vp (обязателен при --model segy)')
+    ap.add_argument('--segy-dx',        type=float, default=None,
+                    help='Шаг сетки в м для SEG-Y модели (авто-определение из заголовка, если не задан)')
     ap.add_argument('--clip',           type=float, default=None)
     ap.add_argument('--illum-comp',     action='store_true',
                     help='Illumination compensation (выкл по умолч.)')
@@ -201,6 +205,19 @@ def main():
             pts_actual = 1500. / (freq * dx_actual)
             print(f'  Marmousi: dx фиксирован={dx_actual:.0f} м ({pts_actual:.1f} пт/λ), '
                   f'--pts-per-lambda игнорируется')
+    elif args.model == 'segy':
+        if not args.vp_file:
+            raise SystemExit('Ошибка: для --model segy необходимо указать --vp-file <путь к .sgy файлу>')
+        freq = args.freq
+        cfg  = setup_from_segy(args.vp_file, freq=freq, downsample=args.factor, dx=args.segy_dx)
+        n_shots = args.n_shots or 20
+        nt             = cfg['nodes_time']
+        bytes_per_snap = cfg['nx'] * cfg['ny'] * 8
+        auto_every     = max(1, nt // int(2e9 / bytes_per_snap))
+        save_every     = args.save_every or auto_every
+        if not args.save_every:
+            print(f'  Авто save_every={save_every} '
+                  f'(RAM/шот ~{nt//save_every*bytes_per_snap/1e9:.1f} ГБ)')
     else:
         freq   = args.freq
         vp_min = 2000.

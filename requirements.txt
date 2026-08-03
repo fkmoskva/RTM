@@ -4,3 +4,4 @@ numba
 scipy
 teneva
 pytest
+segyio

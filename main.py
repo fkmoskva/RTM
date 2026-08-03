@@ -19,7 +19,7 @@ import os
 
 from src.compression import compress_tt, decompress_tt, compress_qtt, decompress_qtt, storage_bytes
 from src.solver import run_forward, run_adjoint
-from src.models import setup_twolayer, setup_marmousi
+from src.models import setup_twolayer, setup_marmousi, setup_from_segy
 from src.imaging import cross_correlate, metrics, analyse_snapshot
 from src.plotting import plot_snapshots, plot_seismogram, plot_image, plot_comparison, plot_metrics_curve
 
@@ -182,13 +182,19 @@ def run_experiment(name, cfg, save_every, epsilons, out):
 '''Точка входа: разбор аргументов и запуск.'''
 def main():
     ap = argparse.ArgumentParser(description='Эксперимент по сжатию волнового поля RTM')
-    ap.add_argument('--model',      choices=['twolayer', 'marmousi', 'both'], default='twolayer')
+    ap.add_argument('--model',      choices=['twolayer', 'marmousi', 'both', 'segy'], default='twolayer')
     ap.add_argument('--save-every', type=int,   default=20)
     ap.add_argument('--out',        default='results')
     ap.add_argument('--nx',         type=int,   default=2000)
     ap.add_argument('--ny',         type=int,   default=500)
     ap.add_argument('--dx',         type=float, default=10.)
     ap.add_argument('--freq',       type=float, default=10.)
+    ap.add_argument('--vp-file',    default=None,
+                    help='Путь к SEG-Y файлу с моделью Vp (обязателен при --model segy)')
+    ap.add_argument('--segy-dx',    type=float, default=None,
+                    help='Шаг сетки в м для SEG-Y модели (авто-определение из заголовка, если не задан)')
+    ap.add_argument('--factor',     type=int,   default=1,
+                    help='Прореживание SEG-Y модели: 2 → в 2 раза реже по каждой оси')
     args = ap.parse_args()
 
     if args.model in ('twolayer', 'both'):
@@ -198,6 +204,12 @@ def main():
     if args.model in ('marmousi', 'both'):
         cfg = setup_marmousi(freq=args.freq)
         run_experiment('marmousi', cfg, max(args.save_every, 20), EPSILONS, args.out)
+
+    if args.model == 'segy':
+        if not args.vp_file:
+            raise SystemExit('Ошибка: для --model segy необходимо указать --vp-file <путь к .sgy файлу>')
+        cfg = setup_from_segy(args.vp_file, freq=args.freq, downsample=args.factor, dx=args.segy_dx)
+        run_experiment('segy', cfg, max(args.save_every, 20), EPSILONS, args.out)
 
 
 if __name__ == '__main__':

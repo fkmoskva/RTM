@@ -20,15 +20,16 @@ import numpy as np
 
 from src.models import setup_twolayer, setup_marmousi, setup_from_segy
 from src.solver import run_forward, run_adjoint_imaging
+from src.imaging import illumination_compensate
 from src.plotting import plot_seismogram
+from src.time_sampling import composite_gauss_schedule, build_step_schedule, uniform_step_schedule
 
 
 OUT = 'results/reference'
 
 
 '''Объём RAM на один шот в ГБ.'''
-def estimate_memory_gb(cfg, save_every):
-    n_snaps = cfg['nodes_time'] // save_every
+def estimate_memory_gb(cfg, n_snaps):
     return n_snaps * cfg['nx'] * cfg['ny'] * 8 / 1e9
 
 
@@ -39,27 +40,47 @@ def shot_positions(cfg, n_shots):
 
 
 '''Печатает параметры запуска в консоль.'''
-def print_header(cfg, save_every, n_shots, model):
-    mem_gb  = estimate_memory_gb(cfg, save_every)
-    n_snaps = cfg['nodes_time'] // save_every
+def print_header(cfg, n_snaps, n_shots, model):
+    mem_gb  = estimate_memory_gb(cfg, n_snaps)
     shots   = shot_positions(cfg, n_shots)
     xs_km   = ', '.join(f'{x*cfg["dx"]/1e3:.1f}' for x in shots)
+    phys_x_cells = cfg['nx'] - 2 * cfg['absorb_cells']
+    phys_z_cells = cfg['ny'] - 2 * cfg['absorb_cells']
+    phys_note = ''
+    if phys_x_cells <= 0 or phys_z_cells <= 0:
+        phys_x_km = cfg['nx'] * cfg['dx'] / 1e3
+        phys_z_km = cfg['ny'] * cfg['dx'] / 1e3
+        phys_note = ' (crop disabled; showing full extent)'
+    else:
+        phys_x_km = phys_x_cells * cfg['dx'] / 1e3
+        phys_z_km = phys_z_cells * cfg['dx'] / 1e3
     print('=' * 64)
     print(f'  Multi-shot RTM — {model}')
     print(f'  Сетка         : {cfg["nx"]} x {cfg["ny"]}   dx = {cfg["dx"]:.0f} м')
-    print(f'  Физич. область: {(cfg["nx"]-2*cfg["absorb_cells"])*cfg["dx"]/1e3:.1f} x '
-          f'{(cfg["ny"]-2*cfg["absorb_cells"])*cfg["dx"]/1e3:.1f} км')
+    print(f'  Физич. область: {phys_x_km:.1f} x {phys_z_km:.1f} км{phys_note}')
     print(f'  Частота       : {cfg["freq"]} Гц')
     print(f'  t_max         : {cfg["nodes_time"]*cfg["dt"]:.2f} с  ({cfg["nodes_time"]} шагов)')
     print(f'  Шотов         : {n_shots}  x_src = [{xs_km}] км')
-    print(f'  Снимков/шот   : ~{n_snaps}  (save_every={save_every})')
+    print(f'  Снимков/шот   : {n_snaps}')
     print(f'  RAM/шот       : ~{mem_gb:.1f} ГБ')
     print('=' * 64)
     if mem_gb > 6:
-        print(f'  ВНИМАНИЕ: {mem_gb:.1f} ГБ/шот — увеличьте --save-every')
+        print(f'  ВНИМАНИЕ: {mem_gb:.1f} ГБ/шот — увеличьте --save-every / --gll-segments')
 
 
-'''Сохраняет RTM-изображение в PNG, обрезая спанж-границы.'''
+'''Безопасно обрезает физическую область и возвращает срезы по осям.'''
+def physical_crop(image, n_abs, crop_x=True, crop_z=True):
+    nx, ny = image.shape
+    n_abs = max(0, int(n_abs))
+    crop_x_ok = crop_x and 2 * n_abs < nx
+    crop_z_ok = crop_z and 2 * n_abs < ny
+    x0 = n_abs if crop_x_ok else 0
+    z0 = n_abs if crop_z_ok else 0
+    x1 = nx - n_abs if crop_x_ok else nx
+    z1 = ny - n_abs if crop_z_ok else ny
+    return image[x0:x1, z0:z1], x0, x1, z0, z1
+
+
 def save_rtm_image(image, cfg, out, filename, title_extra='', clip_val=None):
     import matplotlib
     matplotlib.use('Agg')
@@ -68,86 +89,107 @@ def save_rtm_image(image, cfg, out, filename, title_extra='', clip_val=None):
     n_abs  = cfg['absorb_cells']
     dx_km  = cfg['dx'] / 1e3
 
-    phys   = image[n_abs:-n_abs, 0:-n_abs]
-    x0, x1 = n_abs * dx_km, (cfg['nx'] - n_abs) * dx_km
-    z0, z1 = 0., (cfg['ny'] - n_abs) * dx_km
+    phys, x0_i, x1_i, z0_i, z1_i = physical_crop(image, n_abs, crop_x=True, crop_z=True)
+    x0, x1 = x0_i * dx_km, x1_i * dx_km
+    z0, z1 = z0_i * dx_km, z1_i * dx_km
     extent = [x0, x1, z1, z0]
 
     phys_abs = np.abs(phys)
     clip = clip_val if clip_val is not None \
            else max(np.percentile(phys_abs, 99.9), 1e-30)
 
-    pw, ph = x1 - x0, z1 - z0
-    scale  = 10.0 / max(pw, ph)
-
-    fig, ax = plt.subplots(figsize=(pw * scale, ph * scale))
+    # Держим фигуру читаемой, даже если физическая область сильно вытянута.
+    fig_w = 14.0
+    fig_h = 6.0
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
     ax.imshow(phys.T, cmap='gray', aspect='auto',
               extent=extent, vmin=-clip, vmax=clip)
     ax.set_xlabel('X, км')
     ax.set_ylabel('Z, км')
     ax.set_title(f'RTM {cfg["nx"]}x{cfg["ny"]} {cfg["freq"]} Гц{title_extra}  '
                  f'clip={clip:.2e}', fontsize=10)
-    plt.tight_layout()
     path = f'{out}/{filename}'
     fig.savefig(path, dpi=200, bbox_inches='tight')
     plt.close(fig)
     return path
 
 
-'''Форвард + адджоинт для одного шота. Возвращает (image, illumination).'''
-def run_one_shot(cfg, i_src, save_every, out, shot_idx, n_shots):
+'''Форвард + адджоинт для одного шота. Возвращает (image, illum_source).
+step_sizes/weight_at/is_nominal — сетка шагов по времени (src.time_sampling),
+общая для forward- и adjoint-прохода.'''
+def run_one_shot(cfg, i_src, step_sizes, weight_at, is_nominal, out, shot_idx, n_shots):
     cfg = dict(cfg)
     cfg['i_src'] = i_src
     x_km = i_src * cfg['dx'] / 1e3
     print(f'\n  [Шот {shot_idx+1}/{n_shots}]  i_src={i_src}  x={x_km:.2f} км')
 
     t_start = time.time()
-    forward_snaps, seismogram = run_forward(cfg, save_every=save_every, verbose=False)
+    forward_snaps, seismogram = run_forward(
+        cfg, step_sizes, weight_at, is_nominal, verbose=False,
+    )
     print(f'    forward: {len(forward_snaps)} снимков  ({time.time()-t_start:.1f}с)')
 
     t_start = time.time()
-    shot_image, shot_illum = run_adjoint_imaging(cfg, seismogram, forward_snaps, verbose=False)
+    shot_image, shot_illum_source = run_adjoint_imaging(
+        cfg, seismogram, forward_snaps, step_sizes, weight_at, is_nominal, verbose=False,
+    )
     print(f'    adjoint: max={np.abs(shot_image).max():.3e}  ({time.time()-t_start:.1f}с)')
 
     if shot_idx == 0:
         plot_seismogram(seismogram, cfg, f'{out}/seismogram_shot0.png')
 
     del forward_snaps, seismogram
-    return shot_image, shot_illum
+    return shot_image, shot_illum_source
 
 
 '''Multi-shot RTM: суммирует шоты, сохраняет .npy и PNG.'''
-def run_reference(cfg, save_every, out, n_shots=5, clip_val=None, illum_comp=False):
+def run_reference(cfg, step_sizes, weight_at, is_nominal, out, n_shots=5, clip_val=None,
+                  illum_comp=False, illum_damping=1e-2):
     os.makedirs(out, exist_ok=True)
     t_total = time.time()
 
-    shot_xs     = shot_positions(cfg, n_shots)
-    total_image = np.zeros((cfg['nx'], cfg['ny']))
-    total_illum = np.zeros((cfg['nx'], cfg['ny']))
+    shot_xs              = shot_positions(cfg, n_shots)
+    total_image          = np.zeros((cfg['nx'], cfg['ny']))
+    total_illum_source   = np.zeros((cfg['nx'], cfg['ny']))
 
     for idx, i_src in enumerate(shot_xs):
-        shot_img, shot_illum = run_one_shot(cfg, i_src, save_every, out, idx, n_shots)
-        total_image += shot_img
-        total_illum += shot_illum
+        shot_img, shot_illum_source = run_one_shot(
+            cfg, i_src, step_sizes, weight_at, is_nominal, out, idx, n_shots,
+        )
+        total_image          += shot_img
+        total_illum_source   += shot_illum_source
 
     elapsed = time.time() - t_total
     print(f'\n  Все шоты готовы за {elapsed/60:.1f} мин')
     print(f'  Image max = {np.abs(total_image).max():.4e}')
 
     if illum_comp:
-        illum_max = total_illum.max()
-        illum_eps = 0.05 * illum_max if illum_max > 0 else 1.
-        out_image = total_image / (total_illum + illum_eps)
-        print(f'  Illumination comp.: eps={illum_eps:.3e}')
+        out_image = illumination_compensate(total_image, total_illum_source, damping=illum_damping)
+        print(f'  Illumination comp. (water-level, source-only): damping={illum_damping:.3g}')
     else:
         out_image = total_image
 
     npy_path = f'{out}/rtm_reference.npy'
     np.save(npy_path, out_image)
-    np.save(f'{out}/rtm_illum.npy', total_illum)
+    np.save(f'{out}/rtm_illum_source.npy', total_illum_source)
+    np.savez(f'{out}/rtm_shots.npz', i_src=shot_xs, j_src=cfg['j_src'])
+    np.savez(
+        f'{out}/rtm_meta.npz',
+        dx=float(cfg['dx']),
+        freq=float(cfg['freq']),
+        vp_min=float(cfg['Vp'].min()),
+        vp_max=float(cfg['Vp'].max()),
+        absorb_cells=int(cfg['absorb_cells']),
+        nx=int(cfg['nx']),
+        ny=int(cfg['ny']),
+        i_src=int(cfg['i_src']),
+        j_src=int(cfg['j_src']),
+        n_shots=int(n_shots),
+        n_snapshots=int(len(weight_at)),
+    )
 
     n_abs = cfg['absorb_cells']
-    phys  = out_image[n_abs:-n_abs, n_abs:-n_abs]
+    phys, *_ = physical_crop(out_image, n_abs, crop_x=True, crop_z=True)
     label = f' | {n_shots} шотов' + (' | illum' if illum_comp else '')
 
     final_path = save_rtm_image(out_image, cfg, out, 'rtm_reference.png',
@@ -174,6 +216,12 @@ def main():
                     help='Точек на длину волны; авто-вычисляет dx = Vp_min / (freq * N)')
     ap.add_argument('--n-shots',        type=int,   default=None)
     ap.add_argument('--save-every',     type=int,   default=None)
+    ap.add_argument('--time-sampling',  choices=['uniform', 'gauss'], default='uniform',
+                    help='Выбор временных снимков: равномерная сетка или составная квадратура Гаусса-Лежандра')
+    ap.add_argument('--gauss-segments', type=int, default=5,
+                    help='Число временных сегментов составной квадратуры Гаусса-Лежандра')
+    ap.add_argument('--gauss-points',   type=int, default=5,
+                    help='Число узлов Гаусса-Лежандра в одном временном сегменте')
     ap.add_argument('--src-z',          type=int,   default=None,
                     help='Глубина источника в ячейках (только twolayer)')
     ap.add_argument('--factor',         type=int,   default=1,
@@ -181,10 +229,14 @@ def main():
     ap.add_argument('--vp-file',        default=None,
                     help='Путь к SEG-Y файлу с моделью Vp (обязателен при --model segy)')
     ap.add_argument('--segy-dx',        type=float, default=None,
-                    help='Шаг сетки в м для SEG-Y модели (авто-определение из заголовка, если не задан)')
+                    help='Шаг сетки в м для SEG-Y модели (авто-определение из заголовка, если не задан; '
+                        'при необходимости модель будет интерполирована до dx <= lambda_min/5)')
     ap.add_argument('--clip',           type=float, default=None)
     ap.add_argument('--illum-comp',     action='store_true',
                     help='Illumination compensation (выкл по умолч.)')
+    ap.add_argument('--illum-damping',  type=float, default=1e-2,
+                    help='Water-level damping для --illum-comp: eps = damping * max(illum) '
+                         '(меньше=резче/шумнее, больше=мягче)')
     ap.add_argument('--out',            default=OUT)
     ap.add_argument('--yes',            action='store_true')
     args = ap.parse_args()
@@ -232,18 +284,30 @@ def main():
         if args.src_z is not None:
             cfg['j_src'] = max(cfg['absorb_cells'] + 2, min(args.src_z, cfg['ny'] - 2))
 
-    print_header(cfg, save_every, n_shots, args.model)
+    dt = cfg['dt']
+    if args.time_sampling == 'gauss':
+        times, weights = composite_gauss_schedule(
+            cfg['nodes_time'], dt, args.gauss_segments, args.gauss_points,
+        )
+        step_sizes, weight_at, is_nominal = build_step_schedule(times, weights, cfg['nodes_time'], dt)
+        print(f'  Составная квадратура Гаусса-Лежандра: {args.gauss_segments} сегм. × '
+              f'{args.gauss_points} узл. = {len(weight_at)} снимков '
+              f'({len(step_sizes)} шагов решателя, из них {len(step_sizes)-cfg["nodes_time"]+1} доп. к базовой сетке)')
+    else:
+        step_sizes, weight_at, is_nominal = uniform_step_schedule(cfg['nodes_time'], dt, save_every)
 
-    ram_gb = estimate_memory_gb(cfg, save_every)
-    if not args.yes and ram_gb > 6:
+    print_header(cfg, len(weight_at), n_shots, args.model)
+
+    ram_gb = estimate_memory_gb(cfg, len(weight_at))
+    if not args.yes and ram_gb > 10:
         ans = input('  Продолжить? [y/N]: ').strip().lower()
         if ans != 'y':
             raise SystemExit('Прервано.')
 
     out = args.out if args.out != OUT else f'{OUT}/{args.model}'
-    run_reference(cfg, save_every, out,
+    run_reference(cfg, step_sizes, weight_at, is_nominal, out,
                   n_shots=n_shots, clip_val=args.clip,
-                  illum_comp=args.illum_comp)
+                  illum_comp=args.illum_comp, illum_damping=args.illum_damping)
 
 
 if __name__ == '__main__':

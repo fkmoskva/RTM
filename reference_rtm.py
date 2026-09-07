@@ -21,7 +21,6 @@ import numpy as np
 from src.models import setup_twolayer, setup_marmousi, setup_from_segy
 from src.solver import run_forward, run_adjoint_imaging
 from src.imaging import illumination_compensate
-from src.plotting import plot_seismogram
 from src.time_sampling import composite_gauss_schedule, build_step_schedule, uniform_step_schedule
 
 
@@ -134,9 +133,6 @@ def run_one_shot(cfg, i_src, step_sizes, weight_at, is_nominal, out, shot_idx, n
         cfg, seismogram, forward_snaps, step_sizes, weight_at, is_nominal, verbose=False,
     )
     print(f'    adjoint: max={np.abs(shot_image).max():.3e}  ({time.time()-t_start:.1f}с)')
-
-    if shot_idx == 0:
-        plot_seismogram(seismogram, cfg, f'{out}/seismogram_shot0.png')
 
     del forward_snaps, seismogram
     return shot_image, shot_illum_source
